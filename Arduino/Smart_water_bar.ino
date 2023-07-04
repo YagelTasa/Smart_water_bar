@@ -1,0 +1,494 @@
+#include <math.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h> // ספרייה למסך
+
+#define sensor1 A0 // ntc חמים
+#define sensor2 A1 // ntc קרים
+#define lukewarm_led 9 // לד פושרים
+#define warning_led 10 // לד אזהרה
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+const int ntc_hot = A0; // חיישן טמפרטורה חמים
+const int ntc_cold = A1; // חיישן טמפרטורה קרים
+const int boil_led = 2; // הבהוב לד הרתחה
+
+int boil_button = 0; // הרתחה
+int hot_button = 0; // מזיגה חמים
+int cold_button = 0; // מזיגה קרים
+int lukewarm_button = 0; // מזיגה פושרים
+int sec_4_button = 0; // 4 שניות מזיגה
+int sec_8_button = 0; // 8 שניות מזיגה
+int sec_15_button = 0; // 15 שניות מזיגה
+int pouring_time=0; // משתנה לזמן מזיגת כוס
+int overflow = 0; // חיישן לחות
+double lukewarm_temperature = 0; // משתנה לטמפרטורת מים פושרים
+
+byte degree[] = {B00110,B01001,B01001,B00110,B00000,B00000,B00000,B00000}; // קוד לסימן מעלות
+
+void setup() // תוכנית ראשית שרצה בהתחלה
+{
+  lcd.init(); // הפעלת מסך
+  lcd.backlight(); // הפעלת תאורה אחורית
+  lcd.begin(16,2); // הדפסה בשורה ועמודה ספציפית
+  lcd.createChar(1, degree);  // הגדרת 1 לסימן מעלות
+  lcd.setCursor(3,0); // הדפסה בשורה ועמודה ספציפית
+  lcd.print("Welcome to"); // הדפסה
+  lcd.setCursor(5,1); // הדפסה בשורה ועמודה ספציפית
+  lcd.print("Ariel 8");
+  delay(2500); // השהייה של 2 וחצי שניות
+  lcd.clear(); // נקה מסך
+  Serial.begin(9600);	// הגדר קצב העברת נתונים עבור תקשורת טורית
+  pinMode(boil_led, OUTPUT); // לד הבהוב בעת הרתחה
+}
+
+void loop() // תוכנית שרצה בצורת לולאה
+{
+/*--------------------------------------------בלוק חישוב טמפרטורת מים חמים וקרים -----------------------------------------------*/
+/*-----------------חישוב טמפרוטרת חמים--------------*/
+  int ntc_hot_adc;
+  double output_voltage_1, ntc_hot_resistance, ntc_hot_resistance_ln, hot_temperature;
+  ntc_hot_adc = analogRead(ntc_hot);
+  output_voltage_1 = ( (ntc_hot_adc * 5.0) / 1023.0 );
+  ntc_hot_resistance = ( ( 5 * ( 10.0 / output_voltage_1 ) ) - 10 ); /* Resistance in kilo ohms */
+  ntc_hot_resistance = ntc_hot_resistance * 1000;
+  ntc_hot_resistance_ln = log(ntc_hot_resistance); /* Resistance in ohms   */
+  hot_temperature = ( 1 / ( 0.001129148 + ( 0.000234125 * ntc_hot_resistance_ln ) + ( 0.0000000876741 * ntc_hot_resistance_ln * ntc_hot_resistance_ln * ntc_hot_resistance_ln ) ) ) - 273.15; /* Temperature in degree Celsius */
+/*-----------------חישוב טמפרוטרת קרים--------------*/
+  int ntc_cold_adc;
+  double output_voltage_2, ntc_cold_resistance, ntc_cold_resistance_ln, cold_temperature;  
+  ntc_cold_adc = analogRead(ntc_cold);
+  output_voltage_2 = ( (ntc_cold_adc * 5.0) / 1023.0 );
+  ntc_cold_resistance = ( ( 5 * ( 10.0 / output_voltage_2 ) ) - 10 ); /* Resistance in kilo ohms */
+  ntc_cold_resistance = ntc_cold_resistance * 1000;
+  ntc_cold_resistance_ln = log(ntc_cold_resistance); /* Resistance in ohms   */
+  cold_temperature = ( 1 / ( 0.001129148 + ( 0.000234125 * ntc_cold_resistance_ln ) + ( 0.0000000876741 * ntc_cold_resistance_ln * ntc_cold_resistance_ln * ntc_cold_resistance_ln ) ) ) - 273.15; /* Temperature in degree Celsius */
+/*----------------- הדפסת טמפרוטרת חמים וקרים--------------*/
+  lcd.clear(); // ניקוי מסך
+  lcd.setCursor(1,0); // הדפסה בשורה ועמודה ספציפית
+  lcd.print("Hot");
+  lcd.setCursor(11,0); // הדפסה בשורה ועמודה ספציפית
+  lcd.print("Cold");
+  lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+  lcd.print(hot_temperature);
+  lcd.write(1); // הדפסת סימן מעלות
+  lcd.print("C");
+  lcd.setCursor(9,1); // הדפסה בשורה ועמודה ספציפית
+  lcd.print(cold_temperature);
+  lcd.write(1); // הדפסת סימן מעלות
+  lcd.print("C");
+  delay(1000); //השהייה של שנייה
+/*------------------------------------------------------סוף בלוק חישוב טמפרטורה---------------------------------------------------------*/
+/*------------------------------------------------בלוק זמני מזיגת מים חמים וקרים ------------------------------------------------------*/
+/*-------------------בחירת זמן מזיגה-----------------*/
+    boil_button  = digitalRead(4); // הרתחה
+    hot_button = digitalRead(5); // מזיגה חמים
+    cold_button = digitalRead(6); // מזיגה קרים
+    lukewarm_button = digitalRead(7); // מזיגה פושרים
+    sec_4_button = digitalRead(8); // 4 שניות מזיגה
+    sec_8_button = digitalRead(11); // 8 שניות מזיגה
+    sec_15_button = digitalRead(12); // 15 שניות מזיגה
+   if((hot_button == HIGH && pouring_time == 0) || (cold_button == HIGH && pouring_time == 0)) //  אם נלחץ כפתור מזיגת חמים/ קרים ולא נבחר זמן מזיגה
+    {
+      lcd.clear(); //ניקוי מסך
+      lcd.print("Please Select"); // מבקש לבחור זמן מזיגה
+      lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("a pouring time");
+     while(sec_4_button == LOW && sec_8_button == LOW && sec_15_button == LOW) // לולאה לבדיקת לחיצה
+     {
+       sec_4_button = digitalRead(8); // בודק אם נבחר 4 שניות
+       sec_8_button = digitalRead(11); // בודק אם נבחר 8 שניות
+       sec_15_button = digitalRead(12); // בודק אם נבחר 15 שניות
+      if(sec_4_button==HIGH) // אם נבחר 4 שניות 
+       {
+       pouring_time = 4; // משתנה זמן מזיגה
+       lcd.clear(); // נקה מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("4 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear(); // ניקוי מסך
+       }
+      else if(sec_8_button==HIGH) // אם נבחר 8 שניות 
+       {
+       pouring_time = 8; // משתנה זמן מזיגה
+       lcd.clear(); // ניקוי מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("8 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear(); // ניקוי מסך
+       }
+       else if(sec_15_button==HIGH) // אם נבחר 15 שניות 
+       {
+       pouring_time = 15; // משתנה זמן מזיגה
+       lcd.clear(); // ניקוי מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("15 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear(); // ניקוי מסך
+       }
+      }
+    } 
+/*------------ שינוי בחירת זמן מזיגה תוך כדי ריצה----------*/
+    if(sec_4_button==HIGH) // אם נבחר 4 שניות 
+    {
+      pouring_time = 4; // משתנה זמן מזיגה
+      lcd.clear(); // נקה מסך
+      lcd.print("Pouring time:"); // מדפיס זמן נבחר
+      lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("4 Seconds");
+      delay(2000); // השהייה של 2 שניות 
+      lcd.clear(); // נקה מסך
+    }
+    else if(sec_8_button==HIGH) // אם נבחר 8 שניות 
+    {
+      pouring_time = 8; // משתנה זמן מזיגה
+      lcd.clear(); // נקה מסך
+      lcd.print("Pouring time:"); // מדפיס זמן נבחר
+      lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("8 Seconds");
+      delay(2000); // השהייה של 2 שניות 
+      lcd.clear(); // נקה מסך
+    }
+    else if(sec_15_button==HIGH) // אם נבחר 15 שניות 
+    {
+      pouring_time = 15; // משתנה זמן מזיגה
+      lcd.clear(); // נקה מסך
+      lcd.print("Pouring time:"); // מדפיס זמן נבחר
+      lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("15 Seconds");
+      delay(2000); // השהייה של 2 שניות 
+      lcd.clear(); // נקה מסך
+    }
+/*------------------------------------------------סוף בלוק זמני מזיגת מים חמים וקרים------------------------------------------------------*/
+/*------------------------------------------------------ בלוק מזיגת מים חמים---------------------------------------------------------------*/
+         hot_button = digitalRead(5); // ערך לחצן חמים
+         if( hot_button == HIGH && hot_temperature > 90.00 ) // תנאי אם נלחץ מזיגת חמים וטמפ' מעל 90 מעלות
+         {
+          digitalWrite(2, HIGH); // מדליק לד מזיגת חמים
+          for(int i=0; i < pouring_time ; i++) // לולאה להדפסת זמן מזיגה נותר
+          {     
+            lcd.clear(); // נקה מסך
+            lcd.print("Time left for"); // מדפיס זמן מזיגה
+            lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+            lcd.print("pouring : ");
+            lcd.print(pouring_time - i);  
+            delay(1000); // השהייה של שנייה 
+            boil_button  = digitalRead(4); // הרתחה
+            hot_button = digitalRead(5); // מזיגה חמים
+            cold_button = digitalRead(6); // מזיגה קרים
+            lukewarm_button = digitalRead(7); // מזיגה פושרים
+            sec_4_button = digitalRead(8); // 4 שניות מזיגה
+            sec_8_button = digitalRead(11); // 8 שניות מזיגה
+            sec_15_button = digitalRead(12); // 15 שניות מזיגה
+/*--תנאי לבדיקה אם נלחץ כפתור בעת מזיגה אז מפסיק מזיגה---*/
+            if(boil_button == HIGH || hot_button == HIGH || cold_button == HIGH || lukewarm_button == HIGH || sec_4_button == HIGH|| sec_8_button == HIGH || sec_15_button == HIGH)
+              break;     // מפסיק מזיגה
+          }
+           digitalWrite(2, LOW); // מכבה לד מזיגת חמים
+           delay(500); // השהייה של חצי שנייה 
+         }
+/*------------------------------------------------------ סוף בלוק מזיגת מים חמים------------------------------------------------------------*/
+/*------------------------------------------------------ בלוק מזיגת מים קרים---------------------------------------------------------------*/
+         cold_button = digitalRead(6); // ערך לחצן קרים
+         if( cold_button == HIGH) // תנאי אם נלחץ מזיגת קרים
+         {
+          digitalWrite(3, HIGH); // מדליק לד מזיגת קרים
+          for(int i=0; i < pouring_time ; i++) // לולאה להדפסת זמן מזיגה נותר
+          {     
+            lcd.clear(); // נקה מסך
+            lcd.print("Time left for"); // מדפיס זמן מזיגה
+            lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+            lcd.print("pouring : ");
+            lcd.print(pouring_time - i);  
+            delay(1000); // השהייה של שנייה 
+            boil_button  = digitalRead(4); // הרתחה
+            hot_button = digitalRead(5); // מזיגה חמים
+            cold_button = digitalRead(6); // מזיגה קרים
+            lukewarm_button = digitalRead(7); // מזיגה פושרים
+            sec_4_button = digitalRead(8); // 4 שניות מזיגה
+            sec_8_button = digitalRead(11); // 8 שניות מזיגה
+            sec_15_button = digitalRead(12); // 15 שניות מזיגה
+/*--תנאי לבדיקה אם נלחץ כפתור בעת מזיגה אז מפסיק מזיגה---*/
+            if(boil_button == HIGH || hot_button == HIGH || cold_button == HIGH || lukewarm_button == HIGH || sec_4_button == HIGH|| sec_8_button == HIGH || sec_15_button == HIGH)
+              break;     // מפסיק מזיגה
+          }
+           digitalWrite(3, LOW); // מכבה לד מזיגת קרים
+           delay(500); // השהייה של חצי שנייה 
+         }
+/*------------------------------------------------------ סוף בלוק מזיגת מים קרים------------------------------------------------------------*/
+/*------------------------------------------------ בלוק מזיגת מים פושרים (8 שניות)-----------------------------------------------------------*/
+        lukewarm_temperature = ((hot_temperature*2 + cold_temperature*6) / 8 ); // חישוב טמפרטורת פושרים ע"י נוסחאה לפי 2,6 שניות של זמני מזיגה בהכפלת הטמפרטורה בהתאמה
+        lukewarm_button = digitalRead(7); // ערך לחצן פושרים
+         // delay(100);
+         if (lukewarm_button == HIGH ) // תנאי אם נלחץ מזיגת קרים
+           {
+            if (lukewarm_temperature > 25 && lukewarm_temperature < 35 ) // תנאי למזיגת מים פושרים
+             {
+               for(int i = 0; i < 8 ; i++)  // לולאה להדפסת זמן מזיגה נותר
+                {
+                 digitalWrite(lukewarm_led, HIGH); // מדליק לד פושרים
+                 if(i < 2) // תנאי שבודק האם עבר 2 שניות ואז לוקח מהמים הקרים
+                 digitalWrite(2, HIGH); // מדליק לד חמים למשך 2 שניות
+                 else
+                 {
+                 digitalWrite(2, LOW); // מכבה לד חמים לאחר 2 שניות
+                 digitalWrite(3, HIGH); // מדליק לד קרים למשך 6 שניות
+                 }                         
+                 lcd.clear(); // נקה מסך
+                 lcd.print("Time left for");
+                 lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+                 lcd.print("pouring : ");
+                 lcd.print(7-i+1);                             
+                 delay(1000); // השהייה של שנייה 
+                 boil_button  = digitalRead(4); // הרתחה
+                 hot_button = digitalRead(5); // מזיגה חמים
+                 cold_button = digitalRead(6); // מזיגה קרים
+                 lukewarm_button = digitalRead(7); // מזיגה פושרים
+                 sec_4_button = digitalRead(8); // 4 שניות מזיגה
+                 sec_8_button = digitalRead(11); // 8 שניות מזיגה
+                 sec_15_button = digitalRead(12); // 15 שניות מזיגה
+/*--תנאי לבדיקה אם נלחץ כפתור בעת מזיגה אז מפסיק מזיגה---*/
+                 if(boil_button == HIGH || hot_button == HIGH || cold_button == HIGH || lukewarm_button == HIGH || sec_4_button == HIGH|| sec_8_button == HIGH || sec_15_button == HIGH)
+                    break;  // מפסיק מזיגה                
+                }
+               digitalWrite(3, LOW); // מכבה לד קרים
+               digitalWrite(2, LOW); // מכבה לד חמים
+               digitalWrite(lukewarm_led, LOW); // מכבה לד פושרים
+               delay(500); // השהייה של חצי שנייה 
+             }
+             else
+             {
+                 lcd.clear(); // נקה מסך
+                 lcd.print("lukewarm temperature");
+                 lcd.setCursor(5,1); // הדפסה בשורה ועמודה ספציפית
+                 lcd.print(lukewarm_temperature);           
+                 delay(2000); // השהייה של 2 שניות 
+             }
+            }
+/*------------------------------------------------------ סוף בלוק מזיגת מים פושרים------------------------------------------------------------*/
+/*--------------------------------------------------- בלוק לד אזהרה מפני גלישת מים------------------------------------------------------------*/
+        overflow = analogRead(A3); // בודק ערך מפלס חיישן לחות
+        //Serial.println(overflow); // הדפסת הערך
+        if (overflow > 550) // תנאי לגלישת מים
+        digitalWrite(warning_led, HIGH); // מדליק לד אזהרה
+        else // אם לא גולש מכבה לד אזהרה
+        digitalWrite(warning_led, LOW); // מכבה לד אזהרה
+/*----------------------------------------------------------- סוף בלוק לד אזהרה ---------------------------------------------------------------*/
+/*************************************************************************************************************************************************/
+/*------------------------------------------------------ בלוק בקרת הרתחת מים ------------------------------------------------------------------*/
+/*--------------בקרת הרתחת מים-----------*/
+    boil_button = digitalRead(4); // ערך לחצן הרתחה
+    if (boil_button == HIGH || hot_temperature <= 50.00) // בודק האם נלחץ הרתחה או שטמפ' חמים מתחת ל 50 מעלות
+    {
+       while(hot_temperature <= 97.00) // לולאת הרתחת מים חמים עד ל 97 מעלות
+       {
+/*-----------------חישוב טמפרוטרת חמים--------------*/
+         ntc_hot_adc = analogRead(ntc_hot);
+         output_voltage_1 = ( (ntc_hot_adc * 5.0) / 1023.0 );
+         ntc_hot_resistance = ( ( 5 * ( 10.0 / output_voltage_1 ) ) - 10 ); /* Resistance in kilo ohms */
+         ntc_hot_resistance = ntc_hot_resistance * 1000;
+         ntc_hot_resistance_ln = log(ntc_hot_resistance); /* Resistance in ohms   */
+         hot_temperature = ( 1 / ( 0.001129148 + ( 0.000234125 * ntc_hot_resistance_ln ) + ( 0.0000000876741 * ntc_hot_resistance_ln * ntc_hot_resistance_ln * ntc_hot_resistance_ln ) ) ) - 273.15; /* Temperature in degree Celsius */
+/*-----------------חישוב טמפרוטרת קרים--------------*/
+         ntc_cold_adc = analogRead(ntc_cold);
+         output_voltage_2 = ( (ntc_cold_adc * 5.0) / 1023.0 );
+         ntc_cold_resistance = ( ( 5 * ( 10.0 / output_voltage_2 ) ) - 10 ); /* Resistance in kilo ohms */
+         ntc_cold_resistance = ntc_cold_resistance * 1000;
+         ntc_cold_resistance_ln = log(ntc_cold_resistance); /* Resistance in ohms   */
+         cold_temperature = ( 1 / ( 0.001129148 + ( 0.000234125 * ntc_cold_resistance_ln ) + ( 0.0000000876741 * ntc_cold_resistance_ln * ntc_cold_resistance_ln * ntc_cold_resistance_ln ) ) ) - 273.15; /* Temperature in degree Celsius */
+/*----------------- הדפסת טמפרוטרת חמים וקרים--------------*/
+         lcd.clear(); // נקה מסך
+         lcd.setCursor(0,0); // הדפסה בשורה ועמודה ספציפית
+         lcd.print("Heats-Up");
+         lcd.setCursor(11,0); // הדפסה בשורה ועמודה ספציפית
+         lcd.print("Cold");
+         lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+         lcd.print(hot_temperature);
+         lcd.write(1); // הדפסת סימן מעלות
+         lcd.print("C");
+         lcd.setCursor(9,1); // הדפסה בשורה ועמודה ספציפית
+         lcd.print(cold_temperature);
+         lcd.write(1); // הדפסת סימן מעלות
+         lcd.print("C");
+/*---------------הבהוב לד הרתחה----------*/
+          digitalWrite(boil_led, HIGH); // מדליק לד הרתחה
+          delay(500); // השהייה של חצי שנייה 
+          digitalWrite(boil_led, LOW); // מכבה לד הרתחה
+          delay(500); // השהייה של חצי שנייה 
+/*-------------- מזיגת מים קרים  ----------------*/
+         cold_button = digitalRead(6); // ערך לחצן קרים
+         if( cold_button == HIGH && pouring_time != 0) // תנאי אם נלחץ מזיגת קרים
+         {
+          digitalWrite(3, HIGH); // מדליק לד קרים
+          for(int i=0; i < pouring_time;i++) // לולאת הבהוב לד הרתחה ומזיגת מים קרים
+          {
+/*---------------הבהוב לד הרתחה----------*/
+          digitalWrite(boil_led, HIGH); // מדליק לד הרתחה
+          delay(500); // השהייה של חצי שנייה 
+          digitalWrite(boil_led, LOW); // מכבה לד הרתחה
+          delay(500); // השהייה של חצי שנייה 
+          lcd.clear(); // נקה מסך
+          lcd.print("Time left for"); // מדפיס זמן מזיגה
+          lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+          lcd.print("pouring : ");
+          lcd.print(pouring_time - i);  
+          delay(1000); // השהייה של שנייה 
+          boil_button  = digitalRead(4); // הרתחה
+          hot_button = digitalRead(5); // מזיגה חמים
+          cold_button = digitalRead(6); // מזיגה קרים
+          lukewarm_button = digitalRead(7); // מזיגה פושרים
+          sec_4_button = digitalRead(8); // 4 שניות מזיגה
+          sec_8_button = digitalRead(11); // 8 שניות מזיגה
+          sec_15_button = digitalRead(12); // 15 שניות מזיגה
+/*--תנאי לבדיקה אם נלחץ כפתור בעת מזיגה אז מפסיק מזיגה---*/
+          if(boil_button == HIGH || hot_button == HIGH || cold_button == HIGH || lukewarm_button == HIGH || sec_4_button == HIGH|| sec_8_button == HIGH || sec_15_button == HIGH)
+             break;  // מפסיק מזיגה           
+          }
+           digitalWrite(3, LOW); // מכבה לד מזיגת קרים
+           delay(500); // השהייה של חצי שנייה 
+         }
+/*----------------בחירת זמן מזיגה---------------*/
+    boil_button  = digitalRead(4); // הרתחה
+    hot_button = digitalRead(5); // מזיגה חמים
+    cold_button = digitalRead(6); // מזיגה קרים
+    lukewarm_button = digitalRead(7); // מזיגה פושרים
+    sec_4_button = digitalRead(8); // 4 שניות מזיגה
+    sec_8_button = digitalRead(11); // 8 שניות מזיגה
+    sec_15_button = digitalRead(12); // 15 שניות מזיגה
+   if((hot_button == HIGH && pouring_time == 0) || (cold_button == HIGH && pouring_time == 0)) //  אם נלחץ כפתור מזיגת חמים/ קרים ולא נבחר זמן מזיגה
+    {
+      lcd.clear(); // נקה מסך
+      lcd.print("Please Select"); // מבקש לבחור זמן מזיגה
+      lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("a pouring time");
+     while(sec_4_button == LOW && sec_8_button == LOW && sec_15_button == LOW) // לולאה לבדיקת לחיצה
+     {
+       sec_4_button = digitalRead(8); // בודק אם נבחר 4 שניות
+       sec_8_button = digitalRead(11); // בודק אם נבחר 8 שניות
+       sec_15_button = digitalRead(12); // בודק אם נבחר 15 שניות
+      if(sec_4_button==HIGH) // אם נבחר 4 שניות 
+       {
+       pouring_time = 4; // משתנה זמן מזיגה
+       lcd.clear(); // נקה מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("4 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear(); // נקה מסך
+       }
+      else if(sec_8_button==HIGH) // אם נבחר 8 שניות 
+       {
+       pouring_time = 8; // משתנה זמן מזיגה
+       lcd.clear(); // נקה מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("8 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear(); // נקה מסך
+       }
+       else if(sec_15_button==HIGH) // אם נבחר 15 שניות 
+       {
+       pouring_time = 15; // משתנה זמן מזיגה
+       lcd.clear(); // נקה מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("15 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear();  // נקה מסך
+       }
+      }
+    } 
+/*------------ שינוי בחירת זמן מזיגה תוך כדי ריצה----------*/
+    if(sec_4_button==HIGH) // אם נבחר 4 שניות 
+    {
+      pouring_time = 4; // משתנה זמן מזיגה
+      lcd.clear(); // נקה מסך
+      lcd.print("Pouring time:"); // מדפיס זמן נבחר
+      lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("4 Seconds");
+      delay(2000); // השהייה של 2 שניות 
+      lcd.clear(); // נקה מסך
+    }
+    else if(sec_8_button==HIGH) // אם נבחר 8 שניות 
+    {
+      pouring_time = 8; // משתנה זמן מזיגה
+      lcd.clear(); // נקה מסך
+      lcd.print("Pouring time:"); // מדפיס זמן נבחר
+      lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+      lcd.print("8 Seconds");
+      delay(2000); // השהייה של 2 שניות 
+      lcd.clear(); // נקה מסך
+    }
+    else if(sec_15_button==HIGH) // אם נבחר 15 שניות 
+    {
+       pouring_time = 15; // משתנה זמן מזיגה
+       lcd.clear(); // נקה מסך
+       lcd.print("Pouring time:"); // מדפיס זמן נבחר
+       lcd.setCursor(3,1); // הדפסה בשורה ועמודה ספציפית
+       lcd.print("15 Seconds");
+       delay(2000); // השהייה של 2 שניות 
+       lcd.clear(); // נקה מסך
+    }
+/*------------מזיגת מים פושרים למשך 8 שניות בזמן הרתחה------------*/
+       lukewarm_temperature = ((hot_temperature*2 + cold_temperature*6) / 8 ); // חישוב טמפרטורת פושרים ע"י נוסחאה לפי 2,6 שניות של זמני מזיגה בהכפלת הטמפרטורה בהתאמה
+       lukewarm_button = digitalRead(7); // ערך לחצן פושרים
+         // delay(100);
+         if (lukewarm_button == HIGH ) // תנאי אם נלחץ מזיגת קרים
+           {
+            if (lukewarm_temperature > 25 && lukewarm_temperature < 35 ) // תנאי למזיגת מים פושרים
+             {
+               for(int i = 0; i < 8 ; i++)  // לולאה להדפסת זמן מזיגה נותר
+                {
+                 digitalWrite(lukewarm_led, HIGH); // מדליק לד פושרים
+                 if(i < 2) // תנאי שבודק האם עבר 2 שניות ואז לוקח מהמים הקרים
+                 digitalWrite(2, HIGH); // מדליק לד חמים למשך 2 שניות
+                 else
+                 {
+                 digitalWrite(2, LOW); // מכבה לד חמים לאחר 2 שניות
+                 digitalWrite(3, HIGH); // מדליק לד קרים למשך 6 שניות
+                 }                         
+                 lcd.clear(); // נקה מסך
+                 lcd.print("Time left for");
+                 lcd.setCursor(0,1); // הדפסה בשורה ועמודה ספציפית
+                 lcd.print("pouring : ");
+                 lcd.print(7-i+1);                             
+                 delay(1000); // השהייה של שנייה 
+                 boil_button  = digitalRead(4); // הרתחה
+                 hot_button = digitalRead(5); // מזיגה חמים
+                 cold_button = digitalRead(6); // מזיגה קרים
+                 lukewarm_button = digitalRead(7); // מזיגה פושרים
+                 sec_4_button = digitalRead(8); // 4 שניות מזיגה
+                 sec_8_button = digitalRead(11); // 8 שניות מזיגה
+                 sec_15_button = digitalRead(12); // 15 שניות מזיגה
+/*--תנאי לבדיקה אם נלחץ כפתור בעת מזיגה אז מפסיק מזיגה---*/
+                 if(boil_button == HIGH || hot_button == HIGH || cold_button == HIGH || lukewarm_button == HIGH || sec_4_button == HIGH|| sec_8_button == HIGH || sec_15_button == HIGH)
+                    break;  // מפסיק מזיגה                
+                }
+               digitalWrite(3, LOW); // מכבה לד קרים
+               digitalWrite(2, LOW); // מכבה לד חמים
+               digitalWrite(lukewarm_led, LOW); // מכבה לד פושרים
+               delay(500); // השהייה של חצי שנייה 
+             }
+             else
+             {
+                 lcd.clear(); // נקה מסך
+                 lcd.print("lukewarm temperature");
+                 lcd.setCursor(5,1); // הדפסה בשורה ועמודה ספציפית
+                 lcd.print(lukewarm_temperature);           
+                 delay(2000); // השהייה של שנייה 
+             }
+            }
+/*--------------לד אזהרת גלישה תוך כדי רתיחה---------------*/
+           overflow = analogRead(A3); // בודק ערך מפלס חיישן לחות
+           //Serial.println(overflow); // הדפסת הערך
+           if (overflow > 550) // תנאי לגלישת מים
+           digitalWrite(warning_led, HIGH); // מדליק לד אזהרה
+           else // אם לא גולש מכבה לד אזהרה
+           digitalWrite(warning_led, LOW); // מכבה לד אזהרה
+         }
+     }
+/*------------------------------------------------------ סוף בלוק בקרת הרתחת מים ----------------------------------------------------------------*/
+}   
